@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --animate-pulse-glow: pulse-glow 2.5s ease-in-out infinite;
+  --animate-pulse-glow-amber: pulse-glow-amber 2.5s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.25), 0 0 28px rgba(139, 92, 246, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.4), 0 0 40px rgba(139, 92, 246, 0.28);
+  }
+}
+
+@keyframes pulse-glow-amber {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2), 0 0 24px rgba(245, 158, 11, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.35), 0 0 36px rgba(245, 158, 11, 0.2);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #07080c;
+  color: #f4f4f5;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-root {
+  background: linear-gradient(180deg, #07080c 0%, #0c0e14 40%, #090b0f 100%);
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-violet-500/35 bg-gradient-to-b from-violet-500/25 to-violet-600/20 px-4 py-2.5 text-sm font-medium text-violet-100 transition hover:border-violet-400/45 hover:from-violet-500/35 hover:to-violet-600/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/50 active:scale-98 disabled:pointer-events-none disabled:opacity-45;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  .btn-secondary {
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:border-white/15 hover:bg-white/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 active:scale-98;
+  }
+
+  .btn-ghost {
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-white/8 bg-transparent px-3 py-2 text-sm font-medium text-zinc-300 transition hover:bg-white/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 active:scale-98;
+  }
+
+  .btn-danger-ghost {
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-rose-500/25 bg-rose-500/6 px-3 py-2 text-sm font-medium text-rose-200/90 transition hover:border-rose-400/35 hover:bg-rose-500/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/40 active:scale-98;
+  }
+
+  .input-field {
+    @apply w-full cursor-text rounded-xl border border-white/8 bg-zinc-900/80 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 transition focus:border-violet-500/40 focus:outline-none focus:ring-2 focus:ring-violet-500/25;
+  }
+
+  .input-select {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none' viewBox='0 0 24 24' stroke='%23a1a1aa'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-size: 1rem;
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    padding-right: 2.25rem;
+  }
+
+  .panel-surface {
+    @apply rounded-2xl border border-white/7 bg-zinc-900/45 p-6 backdrop-blur-xl ring-1 ring-white/4;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+  }
+}
