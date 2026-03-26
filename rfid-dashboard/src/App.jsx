@@ -21,6 +21,8 @@ import {
   Trash2,
   BookUser,
   Pencil,
+  Palette,
+  SunMedium,
 } from 'lucide-react'
 
 /** Примеры для кнопки «Загрузить примеры» */
@@ -30,6 +32,8 @@ const SEED_EXAMPLES = [
   { id: 'I9J0K1L2', name: 'Алексей Козлов', note: '' },
   { id: 'M3N4O5P6', name: 'Елена Новикова', note: '' },
 ]
+
+const LED_SWATCHES = ['#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ef4444', '#f59e0b']
 
 function formatTime(date) {
   return date.toLocaleTimeString('ru-RU', {
@@ -50,6 +54,26 @@ function formatDate(date) {
   })
 }
 
+function hexToRgb(hex) {
+  const normalized = hex.replace('#', '').trim()
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return { r: 0, g: 0, b: 0 }
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16),
+  }
+}
+
+function rgbToHex({ r, g, b }) {
+  return `#${[r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')}`
+}
+
+function applyBrightness(hex, brightness) {
+  const ratio = Math.max(0, Math.min(100, Number(brightness))) / 100
+  const { r, g, b } = hexToRgb(hex)
+  return rgbToHex({ r: r * ratio, g: g * ratio, b: b * ratio })
+}
+
 export default function App() {
   const [time, setTime] = useState(new Date())
   const [deviceOnline, setDeviceOnline] = useState(false)
@@ -65,6 +89,9 @@ export default function App() {
   const [writeStatus, setWriteStatus] = useState(null)  // null | 'waiting' | 'ok' | 'err'
   const [cardLabel, setCardLabel] = useState('REGISTERED')
   const [selectedScan, setSelectedScan] = useState(null)
+  const [ledHex, setLedHex] = useState('#22c55e')
+  const [ledBrightness, setLedBrightness] = useState(90)
+  const [ledStatus, setLedStatus] = useState(null) // null | 'sending' | 'ok' | 'err'
   const pendingScanRef = useRef(null)
   const metaFlushTimerRef = useRef(null)
   const cardsRef = useRef([])
@@ -294,6 +321,33 @@ export default function App() {
     if (!sent) setWriteStatus(null)
   }
 
+  const sendRgbColor = async (hex = ledHex, brightness = ledBrightness) => {
+    if (!deviceOnline) return
+    setLedStatus('sending')
+    const effectiveHex = applyBrightness(hex, brightness)
+    const sent = await sendToArduino(`RGB:${effectiveHex.slice(1).toUpperCase()}`)
+    if (!sent) {
+      setLedStatus('err')
+      setTimeout(() => setLedStatus(null), 3000)
+      return
+    }
+    setLedStatus('ok')
+    setTimeout(() => setLedStatus(null), 2000)
+  }
+
+  const sendRgbAuto = async () => {
+    if (!deviceOnline) return
+    setLedStatus('sending')
+    const sent = await sendToArduino('RGB:AUTO')
+    if (!sent) {
+      setLedStatus('err')
+      setTimeout(() => setLedStatus(null), 3000)
+      return
+    }
+    setLedStatus('ok')
+    setTimeout(() => setLedStatus(null), 2000)
+  }
+
   // Disconnect serial
   const disconnectSerial = async () => {
     if (reader) {
@@ -373,6 +427,8 @@ export default function App() {
       setSelectedScan(null)
     } else alert(r.error || 'Не удалось')
   }
+
+  const effectiveLedHex = applyBrightness(ledHex, ledBrightness)
 
   return (
     <div className="app-root min-h-screen font-sans text-zinc-100">
@@ -775,6 +831,116 @@ export default function App() {
                 )}
                 {writeStatus === 'err' && (
                   <p className="mt-3 text-sm font-medium text-rose-400/95">Не удалось записать</p>
+                )}
+              </GlassCard>
+            )}
+
+            {deviceOnline && (
+              <GlassCard>
+                <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-zinc-200">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/12">
+                    <Palette className="h-4 w-4 text-violet-300" />
+                  </span>
+                  RGB-палитра подсветки
+                </h3>
+                <p className="mb-4 text-xs leading-relaxed text-zinc-500">
+                  Выберите цвет вручную и отправьте его на Arduino. Кнопка «Авто-дыхание» возвращает
+                  стандартную анимацию ожидания.
+                </p>
+
+                <div className="mb-4 rounded-xl border border-white/[0.08] bg-zinc-900/60 p-3">
+                  <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-wide text-zinc-500">
+                    <span>Превью</span>
+                    <span className="font-mono text-zinc-400">{effectiveLedHex.toUpperCase()}</span>
+                  </div>
+                  <div
+                    className="h-12 rounded-lg ring-1 ring-white/10"
+                    style={{
+                      background: `linear-gradient(120deg, ${effectiveLedHex}, ${ledHex})`,
+                      boxShadow: `0 0 28px ${effectiveLedHex}44`,
+                    }}
+                  />
+                </div>
+
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {LED_SWATCHES.map((hex) => (
+                    <button
+                      key={hex}
+                      type="button"
+                      title={`Выбрать ${hex}`}
+                      onClick={() => {
+                        setLedHex(hex)
+                        sendRgbColor(hex, ledBrightness)
+                      }}
+                      className="h-8 w-8 rounded-lg ring-1 ring-white/20 transition hover:scale-105"
+                      style={{ backgroundColor: hex }}
+                    />
+                  ))}
+                </div>
+
+                <div className="mb-4 flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={ledHex}
+                    onChange={(e) => setLedHex(e.target.value)}
+                    className="h-10 w-12 cursor-pointer rounded-lg border border-white/12 bg-transparent"
+                    title="Кастомный цвет"
+                  />
+                  <input
+                    type="text"
+                    value={ledHex.toUpperCase()}
+                    readOnly
+                    className="input-field font-mono text-xs"
+                    title="Текущий HEX-цвет"
+                  />
+                </div>
+
+                <div className="mb-4">
+                  <div className="mb-2 flex items-center justify-between text-xs text-zinc-500">
+                    <span className="flex items-center gap-1">
+                      <SunMedium className="h-3.5 w-3.5 text-amber-300/80" />
+                      Яркость
+                    </span>
+                    <span className="font-mono text-zinc-300">{ledBrightness}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={5}
+                    max={100}
+                    step={1}
+                    value={ledBrightness}
+                    onChange={(e) => setLedBrightness(Number(e.target.value))}
+                    className="w-full accent-violet-400"
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => sendRgbColor()} className="btn-primary text-xs">
+                    Применить цвет
+                  </button>
+                  <button type="button" onClick={sendRgbAuto} className="btn-secondary text-xs">
+                    Авто-дыхание
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLedHex('#000000')
+                      sendRgbColor('#000000', 100)
+                    }}
+                    className="btn-ghost text-xs text-zinc-400"
+                  >
+                    Выключить LED
+                  </button>
+                </div>
+
+                {ledStatus === 'sending' && (
+                  <p className="mt-3 text-xs font-medium text-zinc-400">Отправка команды…</p>
+                )}
+                {ledStatus === 'ok' && (
+                  <p className="mt-3 text-xs font-medium text-emerald-400/95">Цвет применён</p>
+                )}
+                {ledStatus === 'err' && (
+                  <p className="mt-3 text-xs font-medium text-rose-400/95">Не удалось отправить команду RGB</p>
                 )}
               </GlassCard>
             )}

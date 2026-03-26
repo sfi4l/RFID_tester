@@ -1,26 +1,26 @@
 /**
- * RFID Access Control — надёжная версия для дашборда
- * 
- * Возможности:
- * - Чтение UID карты → SCAN:A1B2C3D4
- * - Чтение блока → команда RDATA в дашборде
- * - Запись блока → команда WRITE:sector:block:hex из дашборда
- * - Heartbeat для стабильного соединения
- * - Debounce — нет дублей при удержании карты
+ * RFID Access Control — версия с RGB (Общий Анод) + Кастомный старт
  */
 
 #include <stdio.h>
 #include <SPI.h>
 #include <MFRC522.h>
 
-#define RST_PIN    9
-#define SS_PIN     10
-#define LED_PIN    2
-#define LED_ERR    LED_PIN    // тот же LED для ошибок (3 коротких моргания)
+#define RST_PIN       9
+#define SS_PIN        10
 
-#define HEARTBEAT_MS   8000   // пинг каждые 8 сек
-#define DEBOUNCE_MS    2500   // пауза между сканами той же карты
-#define INIT_RETRIES   5      // попыток инициализации MFRC522
+// Наши ШИМ-пины для RGB
+#define LED_R         5   // Красный
+#define LED_G         3   // Зеленый 
+#define LED_B         6   // Синий 
+
+// Значения для ШИМ (Общий анод: 0 = максимум яркости, 255 = выключен)
+#define LED_ON_MAX    0
+#define LED_OFF       255
+
+#define HEARTBEAT_MS   8000
+#define DEBOUNCE_MS    2500
+#define INIT_RETRIES   5
 #define INIT_DELAY_MS  500
 
 MFRC522 mfrc522(SS_PIN, RST_PIN);
@@ -31,7 +31,39 @@ unsigned long lastScanTime = 0;
 String lastScanUid = "";
 bool mfrcReady = false;
 
-// Leonardo/Micro: ждём Serial
+// Глобальная переменная для управления эффектом "дыхания"
+bool isIdle = true; 
+bool manualColorEnabled = false;
+uint8_t manualColorR = 0;
+uint8_t manualColorG = 0;
+uint8_t manualColorB = 0;
+
+uint8_t rgbToPwm(uint8_t value) {
+  return (uint8_t)(255 - value);
+}
+
+void applyRgb(uint8_t r, uint8_t g, uint8_t b) {
+  analogWrite(LED_R, rgbToPwm(r));
+  analogWrite(LED_G, rgbToPwm(g));
+  analogWrite(LED_B, rgbToPwm(b));
+}
+
+int hexDigitToInt(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return -1;
+}
+
+bool parseHexByte(String s, uint8_t *out) {
+  if (s.length() != 2) return false;
+  int h = hexDigitToInt(s.charAt(0));
+  int l = hexDigitToInt(s.charAt(1));
+  if (h < 0 || l < 0) return false;
+  *out = (uint8_t)((h << 4) | l);
+  return true;
+}
+
 void waitForSerial() {
 #if defined(__AVR_ATmega32U4__) || defined(ARDUINO_SAM_DUE)
   unsigned long t = millis();
@@ -39,23 +71,82 @@ void waitForSerial() {
 #endif
 }
 
+void turnOffLeds() {
+  analogWrite(LED_R, LED_OFF);
+  analogWrite(LED_G, LED_OFF);
+  analogWrite(LED_B, LED_OFF);
+}
+
+// === НОВАЯ СТАРТОВАЯ АНИМАЦИЯ ===
+void startupAnimation() {
+  isIdle = false; // Отключаем дыхание на время анимации
+  
+  // 1. Горим желтым 3 секунды. 
+  // Глушим красный (150), зеленый на максимум (0), синий выключен (255)
+  analogWrite(LED_R, 150); 
+  analogWrite(LED_G, LED_ON_MAX);   
+  analogWrite(LED_B, LED_OFF); 
+  delay(3000);
+
+  // 2. Чуть горим зеленым (1 секунду)
+  analogWrite(LED_R, LED_OFF);
+  analogWrite(LED_G, LED_ON_MAX);
+  analogWrite(LED_B, LED_OFF);
+  delay(1000);
+
+  // Выключаем всё перед переходом в режим ожидания
+  turnOffLeds();
+  isIdle = true; // Разрешаем синее "дыхание" в loop()
+}
+
+// Функция плавного "дыхания" синим цветом
+void breatheBlue() {
+  unsigned long time = millis() % 2000;
+  int brightness;
+
+  if (time < 1000) {
+    brightness = map(time, 0, 1000, 255, 0);
+  } else {
+    brightness = map(time, 1000, 2000, 0, 255);
+  }
+  
+  analogWrite(LED_B, brightness);
+  analogWrite(LED_R, LED_OFF);
+  analogWrite(LED_G, LED_OFF);
+}
+
+// Функция для жесткого мигания (индикация успеха/ошибки)
+void blinkLedAnalog(uint8_t pin, uint8_t n) {
+  isIdle = false; 
+  turnOffLeds();
+  
+  for (uint8_t i = 0; i < n; i++) {
+    analogWrite(pin, LED_ON_MAX);
+    delay(100);
+    analogWrite(pin, LED_OFF);
+    delay(100);
+  }
+  isIdle = true; 
+}
+
+
 void setup() {
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+  pinMode(LED_G, OUTPUT);
+  pinMode(LED_B, OUTPUT);
+  pinMode(LED_R, OUTPUT);
+  
+  turnOffLeds();
 
   Serial.begin(9600);
   waitForSerial();
   
-  // Даём питанию стабилизироваться
   delay(300);
-  
   SPI.begin();
   
-  // Инициализация MFRC522 с повторными попытками
   for (byte i = 0; i < INIT_RETRIES; i++) {
     mfrc522.PCD_Init();
     delay(50);
-    mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);  // макс. чувствительность
+    mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
     
     byte v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
     if (v == 0x00 || v == 0xFF) {
@@ -65,30 +156,38 @@ void setup() {
       }
       mfrcReady = false;
       Serial.println("INIT_ERR:MFRC522");
+      analogWrite(LED_R, LED_ON_MAX); 
+      isIdle = false;
       break;
     }
     mfrcReady = true;
     break;
   }
 
-  // Ключ по умолчанию (фабричный)
   for (byte i = 0; i < 6; i++) {
     key.keyByte[i] = 0xFF;
   }
 
-  // Сигнал дашборду: всё готово
-  Serial.println("SYSTEM_READY");
-  blinkLed(LED_PIN, 2);
+  if (mfrcReady) {
+    Serial.println("SYSTEM_READY");
+    startupAnimation(); // Вызываем нашу новую красивую анимацию
+  }
 }
 
 void loop() {
-  // Heartbeat — держим соединение
+  if (isIdle && mfrcReady) {
+    if (manualColorEnabled) {
+      applyRgb(manualColorR, manualColorG, manualColorB);
+    } else {
+      breatheBlue();
+    }
+  }
+
   if (millis() - lastHeartbeat >= HEARTBEAT_MS) {
     Serial.println("PING");
     lastHeartbeat = millis();
   }
 
-  // Проверка команд из дашборда (запись и т.д.)
   processSerialCommands();
 
   if (!mfrcReady) {
@@ -96,12 +195,10 @@ void loop() {
     return;
   }
 
-  // Новая карта?
   if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial()) {
     return;
   }
 
-  // Debounce: та же карта в течение DEBOUNCE_MS — игнор
   String uidStr = uidToString(mfrc522.uid);
   unsigned long now = millis();
   if (uidStr == lastScanUid && (now - lastScanTime) < DEBOUNCE_MS) {
@@ -113,26 +210,23 @@ void loop() {
   lastScanUid = uidStr;
   lastScanTime = now;
 
-  // Сначала UID, затем полный дамп (пока карта ещё выбрана)
   Serial.print("SCAN:");
   Serial.println(uidStr);
   sendFullCardDetails();
 
-  digitalWrite(LED_PIN, HIGH);
-  delay(300);
-  digitalWrite(LED_PIN, LOW);
+  blinkLedAnalog(LED_G, 1);
 
   mfrc522.PICC_HaltA();
   mfrc522.PCD_StopCrypto1();
 }
 
-// Печать META:KEY=VALUE (значение без перевода строк)
 void metaLine(const char *key, const char *val) {
   Serial.print("META:");
   Serial.print(key);
   Serial.print("=");
   Serial.println(val);
 }
+
 void metaLineInt(const char *key, int v) {
   Serial.print("META:");
   Serial.print(key);
@@ -151,14 +245,12 @@ void metaHex(const char *key, byte *buf, byte len) {
   Serial.println();
 }
 
-/** Вся доступная информация о карте (MFRC522 + MIFARE) */
 void sendFullCardDetails() {
   MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
 
   metaLineInt("PICC_TYPE_ID", (int)piccType);
   Serial.print("META:PICC_TYPE_NAME=");
   Serial.println(mfrc522.PICC_GetTypeName(piccType));
-
   metaLineInt("UID_LEN_BYTES", (int)mfrc522.uid.size);
   metaHex("UID_RAW", mfrc522.uid.uidByte, mfrc522.uid.size);
 
@@ -166,7 +258,6 @@ void sendFullCardDetails() {
   if (mfrc522.uid.sak < 0x10) Serial.print("0");
   Serial.println(mfrc522.uid.sak, HEX);
 
-  // Размер памяти по типу
   int memKb = 0;
   if (piccType == MFRC522::PICC_TYPE_MIFARE_MINI) memKb = 1;
   else if (piccType == MFRC522::PICC_TYPE_MIFARE_1K) memKb = 1;
@@ -176,7 +267,6 @@ void sendFullCardDetails() {
   byte buffer[18];
   byte bufSize = sizeof(buffer);
 
-  // --- MIFARE Classic: сектор 0, ключ FF..FF ---
   if (piccType == MFRC522::PICC_TYPE_MIFARE_MINI ||
       piccType == MFRC522::PICC_TYPE_MIFARE_1K ||
       piccType == MFRC522::PICC_TYPE_MIFARE_4K) {
@@ -204,9 +294,6 @@ void sendFullCardDetails() {
       }
     }
   }
-  // --- MIFARE Ultralight / NTAG: страницы 0–15 ---
-  // В старых версиях MFRC522 нет MIFARE_Ultralight_Read — используем MIFARE_Read:
-  // для Ultralight одна команда читает 4 страницы подряд (16 байт), адрес = первая страница.
   else if (piccType == MFRC522::PICC_TYPE_MIFARE_UL) {
     metaLine("FAMILY", "Ultralight_NTAG");
     for (byte page = 0; page < 16; page += 4) {
@@ -233,7 +320,6 @@ void sendFullCardDetails() {
   Serial.println("CARD_END");
 }
 
-// Собрать UID в строку "A1B2C3D4"
 String uidToString(MFRC522::Uid uid) {
   String s = "";
   for (byte i = 0; i < uid.size; i++) {
@@ -244,16 +330,6 @@ String uidToString(MFRC522::Uid uid) {
   return s;
 }
 
-void blinkLed(uint8_t pin, uint8_t n) {
-  for (uint8_t i = 0; i < n; i++) {
-    digitalWrite(pin, HIGH);
-    delay(80);
-    digitalWrite(pin, LOW);
-    delay(80);
-  }
-}
-
-// Чтение команд из Serial
 void processSerialCommands() {
   static String cmdBuffer = "";
 
@@ -275,13 +351,11 @@ void handleCommand(String cmd) {
   cmd.trim();
   if (cmd.length() < 1) return;
 
-  // PING (4 символа) — ответ PONG; нельзя требовать length>=5
   if (cmd == "PING" || cmd.startsWith("PING")) {
     Serial.println("PONG");
     return;
   }
 
-  // WRITE:sector:block:hex16bytes  (32 hex символа)
   if (cmd.startsWith("WRITE:")) {
     int i1 = cmd.indexOf(':', 6);
     int i2 = cmd.indexOf(':', i1 + 1);
@@ -297,21 +371,65 @@ void handleCommand(String cmd) {
         cmdWriteBlock(sector, block, hexData);
       } else {
         Serial.println("WRITE_ERR:bad_data");
+        blinkLedAnalog(LED_R, 3);
       }
     } else {
       Serial.println("WRITE_ERR:format");
+      blinkLedAnalog(LED_R, 3);
     }
+    return;
+  }
+
+  if (cmd.startsWith("RGB:")) {
+    String payload = cmd.substring(4);
+    payload.trim();
+
+    if (payload == "AUTO") {
+      manualColorEnabled = false;
+      Serial.println("RGB_OK:AUTO");
+      return;
+    }
+
+    if (payload.length() == 6) {
+      uint8_t r, g, b;
+      bool ok = parseHexByte(payload.substring(0, 2), &r) &&
+                parseHexByte(payload.substring(2, 4), &g) &&
+                parseHexByte(payload.substring(4, 6), &b);
+      if (!ok) {
+        Serial.println("RGB_ERR:bad_hex");
+        blinkLedAnalog(LED_R, 2);
+        return;
+      }
+
+      manualColorR = r;
+      manualColorG = g;
+      manualColorB = b;
+      manualColorEnabled = true;
+      if (isIdle) {
+        applyRgb(manualColorR, manualColorG, manualColorB);
+      }
+      Serial.println("RGB_OK");
+      return;
+    }
+
+    Serial.println("RGB_ERR:format");
+    blinkLedAnalog(LED_R, 2);
     return;
   }
 }
 
-// Запись в блок — ждём карту до 15 сек
 void cmdWriteBlock(byte sector, byte blockNum, String hexStr) {
   unsigned long waitStart = millis();
+  isIdle = false; 
+  turnOffLeds();
+  analogWrite(LED_B, 100); 
+
   while (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial()) {
-    processSerialCommands();  // не блокируем входящие
+    processSerialCommands();  
     if (millis() - waitStart > 15000) {
       Serial.println("WRITE_ERR:no_card");
+      blinkLedAnalog(LED_R, 3);
+      isIdle = true;
       return;
     }
     delay(50);
@@ -320,9 +438,11 @@ void cmdWriteBlock(byte sector, byte blockNum, String hexStr) {
   byte blockAddr = sector * 4 + (blockNum % 4);
   if (blockAddr % 4 == 3) {
     Serial.println("WRITE_ERR:trailer");
+    blinkLedAnalog(LED_R, 3);
     mfrc522.PICC_HaltA();
     mfrc522.PCD_StopCrypto1();
-    return;  // sector trailer не трогаем
+    isIdle = true;
+    return;  
   }
 
   byte dataBlock[16];
@@ -338,9 +458,10 @@ void cmdWriteBlock(byte sector, byte blockNum, String hexStr) {
   if (status != MFRC522::STATUS_OK) {
     Serial.print("WRITE_ERR:auth ");
     Serial.println(mfrc522.GetStatusCodeName(status));
-    blinkLed(LED_PIN, 5);
+    blinkLedAnalog(LED_R, 5);
     mfrc522.PICC_HaltA();
     mfrc522.PCD_StopCrypto1();
+    isIdle = true;
     return;
   }
 
@@ -350,10 +471,11 @@ void cmdWriteBlock(byte sector, byte blockNum, String hexStr) {
 
   if (status == MFRC522::STATUS_OK) {
     Serial.println("WRITE_OK");
-    blinkLed(LED_PIN, 3);
+    blinkLedAnalog(LED_G, 3); 
   } else {
     Serial.print("WRITE_ERR:");
     Serial.println(mfrc522.GetStatusCodeName(status));
-    blinkLed(LED_PIN, 5);
+    blinkLedAnalog(LED_R, 5); 
   }
+  isIdle = true; 
 }
